@@ -26,7 +26,9 @@
 #define kPicoClockHz            (125.0e6f)
 #define kPWMCountMax            (0x10000)
 #define kDefaultPWMFrequency    (1000.0f)
-#define _limit(a, min, max)     (((a)<(min))?(min):(((a)>(max))?(max):(a))) 
+#define _limit(a, min, max)     (((a)<(min))?(min):(((a)>(max))?(max):(a)))
+#define _max(a, b)              (((a)>(b))?(a):(b))
+#define _min(a, b)              (((a)<(b))?(a):(b))
 
 
 // PWM driver class. Singleton that provides control for groups and individual
@@ -52,6 +54,7 @@ float PWMDriver::Source::getSampleRateHz(void) const {
 
 // Subclass overrideable
 void PWMDriver::Source::setPWMConfiguration(float fSampleRateHz, float fClkDiv, uint uWrapValue) {
+    printf("PWMDriver::Source::setPWMConfiguration(%.2f, %.2f, %d)\r\n", fSampleRateHz, fClkDiv, uWrapValue);
     mfSampleRateHz = fSampleRateHz;
     mfClkDiv = fClkDiv;
     muWrapValue = uWrapValue;
@@ -59,6 +62,7 @@ void PWMDriver::Source::setPWMConfiguration(float fSampleRateHz, float fClkDiv, 
 }
                 
 void PWMDriver::Source::configure(void) {
+    printf("PWMDriver::Source::configure\r\n");
     // Disable PWM output - reconfigure - enable PWM output.
     pwm_set_enabled(muSlice, false);
     mbRunning = false;
@@ -76,8 +80,8 @@ void PWMDriver::Source::configure(void) {
 
 void PWMDriver::Source::start(void) {
     if (false == mbRunning) {
+        updateSource();        
         pwm_set_enabled(muSlice, true);
-        updateSource();
         mbRunning = true;
     }
 }
@@ -223,18 +227,21 @@ bool PWMDriver::addGroup(Group *pGroup) {
 
     // Choose the smallest divisor consistent with achieving the desired frequency
     // This maximized the bit resolution available.
-    float fTargetFrequency(pGroup->getDesiredUpdateFrequency()); 
+    float fTargetFrequency(pGroup->getDesiredUpdateFrequency());
+    printf("PWMDriver::addGroup fTargetFrequency = %.4f\r\n", fTargetFrequency);
 
     // Figure out divider that will give us the largest number of bits at the desired target frequency
     // ie. maximizing the wrap count. Note the divisor is an 8.4 fixed-point number in the range 1.x
     // to 255.f
     float fClocksPerInterval(kPicoClockHz / fTargetFrequency);
     float fClkDiv8_4(1.0f);
-    uint uWrapValue(kPWMCountMax);
+    uint uWrapValue(_min(kPWMCountMax, (uint)roundf(fClocksPerInterval)));
+    printf("fCPI=%.4f, fClkDiv8_4=%.4f, Wrap=%d\r\n", fClocksPerInterval, fClkDiv8_4, uWrapValue);
     if (fClocksPerInterval > (float)kPWMCountMax) {
         float fExactClockDivisor(fClocksPerInterval / (float)kPWMCountMax);
         fClkDiv8_4 = (ceilf(fExactClockDivisor * 16.0f) / 16.0f);
         uWrapValue = (uint)roundf((kPicoClockHz / fClkDiv8_4) / fTargetFrequency);
+        printf("#2 fCPI=%.4f, fClkDiv8_4=%.4f, Wrap=%d\r\n", fClocksPerInterval, fClkDiv8_4, uWrapValue);
     }
     float fRealizedFrequency((kPicoClockHz / fClkDiv8_4) / (float)uWrapValue);
     pGroup->setPWMConfiguration(fRealizedFrequency, fClkDiv8_4, uWrapValue);

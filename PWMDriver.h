@@ -41,17 +41,17 @@ class PWMDriver {
                 uint muGPIO;
                 uint muSlice;
                 float mfClkDiv;
-                float mfSampleRateHz;
                 uint muWrapValue;
 
             protected:
-                float getSampleRateHz(void) const;
+                float mfSampleRateHz;
 
             public:
                 Source(uint uGPIO);
                 ~Source();
 
                 uint getGPIO(void) const;
+                float getSampleRateHz(void) const;
 
                 // Subclass overrideable
                 virtual void setPWMConfiguration(float fSampleRateHz, float fClkDiv, uint uWrapValue);

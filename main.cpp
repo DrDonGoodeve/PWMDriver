@@ -12,9 +12,14 @@
 #include <math.h>
 #include "PWMDriver.h"
 
-#define kIncrement      (0.01f)
-#define kOnBoardLED     (PICO_DEFAULT_LED_PIN) // GPIO0
-#define kUpdateFreq     (100.0f)
+#define kIncrement          (0.01f)
+#define kOnBoardLED         (PICO_DEFAULT_LED_PIN) // GPIO25
+#define kLEDUpdateFreq      (100.0f)
+#define kAudioPWM           (14)    // GPIO14, Pin19
+#define kAudioUpdateFreq    (200.0e3f)
+#define kSineFrequency      (1000.0f)
+#define kPi                 (3.141592654f)
+
 
 
 // PWM Source - main board LED
@@ -42,11 +47,10 @@ class Heartbeat : public PWMDriver::Source,
 
         // Subclass required implementations
         virtual float getDesiredUpdateFrequency(void) {
-            return kUpdateFreq;
+            return kLEDUpdateFreq;
         }
 
         virtual void resetSequence(void) {
-            printf("Heartbeat::resetSequence\r\n");
             mbCountingUp = true;
             mfValue = 0.0f;
         }
@@ -70,6 +74,46 @@ class Heartbeat : public PWMDriver::Source,
         }
 };
 
+class SineWave :  public PWMDriver::Source,
+                  public PWMDriver::Group {
+    
+    private:
+        float mfPhase;
+        float mfPhaseIncrement;
+
+    public:
+        SineWave(void) :
+            PWMDriver::Source(kAudioPWM),
+            mfPhase(0.0f) {
+
+            addSource(this);
+            PWMDriver::instance()->addGroup(this);
+        }
+
+        ~SineWave(void) {
+            PWMDriver::instance()->removeGroup(this);
+            removeSource(this);
+        }
+
+        // Subclass required implementations
+        virtual float getDesiredUpdateFrequency(void) {
+            return kAudioUpdateFreq;
+        }
+
+        virtual void resetSequence(void) {
+            mfPhase = 0.0f;
+            mfPhaseIncrement = (kSineFrequency / mfSampleRateHz) * (2.0f * kPi);
+            printf("mfPhaseIncrement = %.4f\r\n");
+        }
+
+        virtual float getNextSequence(void) {
+            float fSine(sinf(mfPhase));
+            mfPhase += mfPhaseIncrement;
+            mfPhase = (mfPhase > (2.0f * kPi))?(mfPhase-(2.0f * kPi)):mfPhase;
+            return ((fSine * 0.5f)+0.5f);   // Bias at 0.5f
+        }
+};
+
 
 int main(void) {
     // Initialize stdio functionality
@@ -79,6 +123,7 @@ int main(void) {
     printf("Starting up...\r\n");
 
     Heartbeat cHeartbeat;
+    SineWave cSineWave;
 
     // Everything after this point happens in the PWM interrupt handler, so we
     // can twiddle our thumbs
