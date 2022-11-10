@@ -11,6 +11,7 @@
 
 #include "pico/stdlib.h"
 #include <list>
+#include <map>
 
 
 // Defines
@@ -97,6 +98,7 @@ class PWMDriver {
 
     private:
         static PWMDriver *mspInstance;
+
         std::list<Group*> mlGroups;
 
         static void pwmISRStatic(void);

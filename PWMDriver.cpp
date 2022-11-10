@@ -19,12 +19,15 @@
 #include "hardware/irq.h"
 #include "hardware/pwm.h"
 #include "hardware/sync.h"
+#include "hardware/gpio.h"
 
+extern int giCalls;
 
 // Defines
 //-----------------------------------------------------------------------------
 #define kPicoClockHz            (125.0e6f)
 #define kPWMCountMax            (0x10000)
+#define kPWMCountMin            (100)      // Appears to be...
 #define kDefaultPWMFrequency    (1000.0f)
 #define _limit(a, min, max)     (((a)<(min))?(min):(((a)>(max))?(max):(a)))
 #define _max(a, b)              (((a)>(b))?(a):(b))
@@ -62,7 +65,7 @@ void PWMDriver::Source::setPWMConfiguration(float fSampleRateHz, float fClkDiv, 
 }
                 
 void PWMDriver::Source::configure(void) {
-    printf("PWMDriver::Source::configure\r\n");
+    printf("PWMDriver::Source::configure GPIO:%d, clkdiv:%f, wrap:%d\r\n", muGPIO, mfClkDiv, muWrapValue);
     // Disable PWM output - reconfigure - enable PWM output.
     pwm_set_enabled(muSlice, false);
     mbRunning = false;
@@ -87,7 +90,8 @@ void PWMDriver::Source::start(void) {
 }
 
 void PWMDriver::Source::updateSource(void) {
-    float fNext(_limit(getNextSequence(), 0.0f, 1.0f));
+    float fNext(getNextSequence());
+    fNext = _limit(fNext, 0.0f, 1.0f);
     uint uNext((uint)roundf(fNext * (float)muWrapValue));
     pwm_set_gpio_level(muGPIO, uNext);
 }
@@ -117,6 +121,7 @@ bool PWMDriver::Group::addSource(Source *pSource) {
 
     // Add to list
     mlSources.push_back(pSource);
+    printf("PWMDriver::Group::addSource - %d\r\n", mlSources.size());
     return true;
 }
 
@@ -167,6 +172,9 @@ PWMDriver *PWMDriver::mspInstance = nullptr;
 
 PWMDriver::PWMDriver(void) {
     printf("PWMDriver::PWMDriver\r\n");
+    //gpio_init(16);
+    //gpio_set_dir(16, GPIO_OUT);
+    //gpio_put(16, false);
 }
 
 PWMDriver::~PWMDriver() {
@@ -188,26 +196,27 @@ void PWMDriver::pwmISRStatic(void) {
 }
 
 void PWMDriver::pwmISR(void) {
-    // Determine which ISR (ie. which group)
+    // Determine which Interrupts have fired (ie. which group(s))
     uint32_t uResidualInterruptVector(pwm_get_irq_status_mask());
-    uint uActiveSlice(0);
-    std::list<uint> lActiveSlices;
-    while(uResidualInterruptVector != 0x0) {
-        if ((uResidualInterruptVector & 0x1) != 0x0) {
-            pwm_clear_irq(uActiveSlice);
-            lActiveSlices.push_back(uActiveSlice);
-        }
-        uResidualInterruptVector >>= 1;
-        uActiveSlice++;
-    }
+
+    // Toggle pin 21 each interrupt
+    //gpio_put(16, !gpio_get_out_level(16));
 
     // Call group update functions
-    for(std::list<uint>::iterator cSlice = lActiveSlices.begin(); cSlice != lActiveSlices.end(); ++cSlice) {
-        for(std::list<Group*>::iterator cGroup=mlGroups.begin(); cGroup != mlGroups.end(); ++cGroup) {
-            if ((*cSlice) == (*cGroup)->muIRQSlice) {
-                (*cGroup)->update();
+    uint32_t uCheckInterrupts(uResidualInterruptVector);
+    uint uActiveSlice(0);
+    while(uCheckInterrupts != 0) {
+        if ((uCheckInterrupts & 0x1) != 0) {    // Slice is active - does it match to a group?
+            pwm_clear_irq(uActiveSlice);
+            for(std::list<Group*>::iterator cGroup=mlGroups.begin(); cGroup != mlGroups.end(); ++cGroup) {
+                if (uActiveSlice == (*cGroup)->muIRQSlice) {
+                    (*cGroup)->update();
+                    break;
+                }
             }
         }
+        uCheckInterrupts >>= 1;
+        uActiveSlice++;
     }
 }
 
@@ -231,8 +240,9 @@ bool PWMDriver::addGroup(Group *pGroup) {
     printf("PWMDriver::addGroup fTargetFrequency = %.4f\r\n", fTargetFrequency);
 
     // Figure out divider that will give us the largest number of bits at the desired target frequency
-    // ie. maximizing the wrap count. Note the divisor is an 8.4 fixed-point number in the range 1.x
-    // to 255.f
+    // ie. maximizing the wrap count. Note the divisor is an 8.4 fixed-point number in the range 1.0
+    // to 255.9375. Note that count is constrained on the lower end at kPWMCountMin. This was found
+    // experimentally and appears to be enforced setting a maximum frequency to 125kHz on the PWM.
     float fClocksPerInterval(kPicoClockHz / fTargetFrequency);
     float fClkDiv8_4(1.0f);
     uint uWrapValue(_min(kPWMCountMax, (uint)roundf(fClocksPerInterval)));
@@ -243,6 +253,7 @@ bool PWMDriver::addGroup(Group *pGroup) {
         uWrapValue = (uint)roundf((kPicoClockHz / fClkDiv8_4) / fTargetFrequency);
         printf("#2 fCPI=%.4f, fClkDiv8_4=%.4f, Wrap=%d\r\n", fClocksPerInterval, fClkDiv8_4, uWrapValue);
     }
+    uWrapValue = (uWrapValue < kPWMCountMin)?kPWMCountMin:uWrapValue;
     float fRealizedFrequency((kPicoClockHz / fClkDiv8_4) / (float)uWrapValue);
     pGroup->setPWMConfiguration(fRealizedFrequency, fClkDiv8_4, uWrapValue);
 
@@ -256,10 +267,10 @@ bool PWMDriver::addGroup(Group *pGroup) {
     pwm_clear_irq(pGroup->muIRQSlice);
     pwm_set_irq_enabled(pGroup->muIRQSlice, true);
     irq_set_exclusive_handler(PWM_IRQ_WRAP, PWMDriver::pwmISRStatic);
-    irq_set_enabled(PWM_IRQ_WRAP, true);
 
-    // Add the group to the list
+    // Add the group to the list - and go
     mlGroups.push_back(pGroup);
+    irq_set_enabled(PWM_IRQ_WRAP, true);
 
     // Start the group
     pGroup->start();
