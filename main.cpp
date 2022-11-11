@@ -17,7 +17,7 @@
 #define kLEDUpdateFreq      (1000.0f)
 #define kAudioPWM           (13)    // GPIO13, Pin17
 #define kAudioUpdateFreq    (160.0e3f)
-#define kSineFrequency      (8000.0f)
+#define kSineFrequency      (1000.0f)
 #define kPi                 (3.141592654f)
 
 int giCalls = 0;
