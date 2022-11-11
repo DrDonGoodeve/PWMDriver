@@ -34,19 +34,21 @@
 class PWMDriver {
     public:
         // A source creates a signal comprising a series of values over time. ::getNextValue will be
-        // called inside an ISR and should therefore be *very* efficient.
+        // called inside an ISR and should therefore be *very* efficient. However the
+        // default mechanism can be overriden to, for example, allow a source to utilize
+        // DMA for higher efficiency operation without breaking the abstraction.
         class Source {
             private:
                 friend class Group;
-                bool mbRunning;
-                uint muGPIO;
-                uint muSlice;
                 float mfClkDiv;
-                uint muWrapValue;
 
             protected:
+                uint muGPIO;
+                uint muSlice;
+                uint muWrapValue;
                 float mfSampleRateHz;
-
+                bool mbRunning;
+                
             public:
                 Source(uint uGPIO);
                 ~Source();
@@ -56,14 +58,15 @@ class PWMDriver {
 
                 // Subclass overrideable
                 virtual void setPWMConfiguration(float fSampleRateHz, float fClkDiv, uint uWrapValue);
-                void configure(void);
-                void start(void);
+                virtual void configure(void);
+                virtual void start(void);
+                virtual void halt(void);                
+                
                 void updateSource(void);
-                void halt(void);
 
                 // Subclass required implementations
                 virtual float getDesiredUpdateFrequency(void) = 0;
-                virtual void resetSequence(void) = 0;           // Reset to start of output sequence
+                virtual void resetSequence(void) = 0;      // Reset to start of output sequence
                 virtual float getNextSequence(void) = 0;   // Get next value to use in range (0.0,1.0]
         };
 
