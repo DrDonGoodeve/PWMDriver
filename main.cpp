@@ -22,6 +22,27 @@
 #define kPi                 (3.141592654f)
 
 int giCalls = 0;
+/*
+float fClk(125.0e6f);
+float fTarget(44.1e3f);
+int iExp(0);
+float fFrac(std::frexpf(fTarget, &iExp));
+float fMinError(1000.0f);
+int iBestDen(0), iBestNum(0);
+for (int iNum = 1; iNum < 65536; iNum++) {
+    int iDen((int)roundf((fClk * (float)iNum) / fTarget));
+    if (iDen > 65535) {
+        break;
+    }
+    float fResult((fClk * iNum) / iDen);
+    float fError(fabs(fTarget - fResult));
+    if (fError < fMinError) {
+        fMinError = fError;
+        iBestDen = iDen;
+        iBestNum = iNum;
+    }
+}
+*/
 
 // PWM Source - main board LED
 //-----------------------------------------------------------------------------
@@ -146,6 +167,7 @@ class DMASineWave :  public PWMDriver::Source,
         uint muLUTSize;
         static DMASineWave *mspInstance;
         uint muDMAChannel;
+        uint muDMATimer;
 
         // Handle interrupt on completion of transfer sequence - reset to top
         // and restart DMA (1 interrupt per cycle through mpLUT).
@@ -187,13 +209,19 @@ class DMASineWave :  public PWMDriver::Source,
             PWMDriver::Source::configure();
             pwm_set_irq_enabled(muSlice, false);    // Ensure Wrap DMA for this slice is disabled
 
-            // Grab DMA channel
-            muDMAChannel = dma_claim_unused_channel(true);  // Required...
+            // Grab and setup DMA channel
+            muDMAChannel = dma_claim_unused_channel(true);
             dma_channel_config cDMAConfig(dma_get_channel_config(muDMAChannel));
             channel_config_set_transfer_data_size(&cDMAConfig, DMA_SIZE_16);
             channel_config_set_read_increment(&cDMAConfig, true);
             channel_config_set_write_increment(&cDMAConfig, false);
-            channel_config_set_dreq(&cDMAConfig, DREQ_PWM_WRAP0 + muSlice);
+
+            // Grab and setup DMA pacing timer (at audio rate - 44.1kHz)
+            muDMATimer = dma_claim_unsused_timer(true);
+            dma_timer_set_fraction(muDMATimer, )
+
+            // Attach timer to DMA channel
+            channel_config_set_dreq(&cDMAConfig, dma_get_timer_dreq(muDMATimer));
             dma_channel_configure(
                 muDMAChannel,               // Channel to be configured
                 &cDMAConfig,                // The configuration we just created
