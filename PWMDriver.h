@@ -59,8 +59,8 @@ class PWMDriver {
                 // Subclass overrideable
                 virtual void setPWMConfiguration(float fSampleRateHz, float fClkDiv, uint uWrapValue);
                 virtual void configure(void);
-                virtual void start(void);
-                virtual void halt(void);                
+                virtual bool start(void);
+                virtual bool halt(void);                
                 
                 void updateSource(void);
 

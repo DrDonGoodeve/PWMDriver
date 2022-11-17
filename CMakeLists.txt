@@ -26,7 +26,7 @@ add_executable(PWMDriverTest
         PWMDriver.cpp
 )
 pico_set_program_name(PWMDriverTest "PWMDriverTest")
-pico_set_program_version(PWMDriverTest "0.1")
+pico_set_program_version(PWMDriverTest "0.2")
 
 # Via UART or USB?
 pico_enable_stdio_uart(PWMDriverTest 0)

@@ -81,12 +81,15 @@ void PWMDriver::Source::configure(void) {
     resetSequence();
 }
 
-void PWMDriver::Source::start(void) {
+bool PWMDriver::Source::start(void) {
+    printf("PWMDriver::Source::start\r\n");
     if (false == mbRunning) {
         updateSource();        
         pwm_set_enabled(muSlice, true);
         mbRunning = true;
+        return true;
     }
+    return false;
 }
 
 void PWMDriver::Source::updateSource(void) {
@@ -96,11 +99,13 @@ void PWMDriver::Source::updateSource(void) {
     pwm_set_gpio_level(muGPIO, uNext);
 }
 
-void PWMDriver::Source::halt(void) {
+bool PWMDriver::Source::halt(void) {
     if (true == mbRunning) {
         pwm_set_enabled(muSlice, false);
         mbRunning = false;
+        return true;
     }
+    return false;
 }
 
 
@@ -255,25 +260,29 @@ bool PWMDriver::addGroup(Group *pGroup) {
     }
     uWrapValue = (uWrapValue < kPWMCountMin)?kPWMCountMin:uWrapValue;
     float fRealizedFrequency((kPicoClockHz / fClkDiv8_4) / (float)uWrapValue);
-    pGroup->setPWMConfiguration(fRealizedFrequency, fClkDiv8_4, uWrapValue);
 
     // Set up the group interrupt - note there is just one PWM IRQ.
+    // Mask our slice's IRQ output into the PWM block's single interrupt line,
+    // register the interrupt handler and enable it. Nothing happens yet
+    // because we have not started the PWM running for this slice.
     Source *pPrimary(pGroup->mlSources.front());
     pGroup->muIRQSlice = pwm_gpio_to_slice_num(pPrimary->getGPIO());
     printf("PWMDriver::addGroup - muIRQSlice = %d\r\n", pGroup->muIRQSlice);
-
-    // Mask our slice's IRQ output into the PWM block's single interrupt line,
-    // register the interrupt handler and enable it.
     pwm_clear_irq(pGroup->muIRQSlice);
     pwm_set_irq_enabled(pGroup->muIRQSlice, true);
     irq_set_exclusive_handler(PWM_IRQ_WRAP, PWMDriver::pwmISRStatic);
-
-    // Add the group to the list - and go
-    mlGroups.push_back(pGroup);
     irq_set_enabled(PWM_IRQ_WRAP, true);
+
+    // Note setPWMConfiguration may disable the pwm irq if it is intending
+    // to not use the interrupt-based update mechanism.
+    pGroup->setPWMConfiguration(fRealizedFrequency, fClkDiv8_4, uWrapValue);
+
+    // Add the group to the groups list - and go
+    mlGroups.push_back(pGroup);
 
     // Start the group
     pGroup->start();
+
     return true;
 }
 
