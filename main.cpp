@@ -383,7 +383,6 @@ class SamplePlayer :  public PWMDriver::Source,
         }
 
         const uint16_t *prepareNextBuffer(void) {
-            //printf("prepareNextBuffer - mpActiveBuffer=0x%08x\r\n", mpActiveBuffer);
             uint16_t *pPreparedBuffer((mpActiveBuffer != mpBuffer)?mpBuffer:&mpBuffer[kSampleBufferSize]);
             if (false == _copyTo16BitBuffer(pPreparedBuffer, kSampleBufferSize)) {
                 return nullptr;
@@ -394,11 +393,11 @@ class SamplePlayer :  public PWMDriver::Source,
         inline void handleIRQ(void) {
            mpActiveBuffer = mpPreparedBuffer;
            if (mpActiveBuffer != nullptr) {
-                giCalls2++;
                 dma_channel_set_read_addr(muDMAChannel, mpActiveBuffer, true);
                 mpPreparedBuffer = prepareNextBuffer();
            } else {
-               stopPlaying();
+                giCalls2++;
+                halt();
            }
         }
 
@@ -432,10 +431,10 @@ class SamplePlayer :  public PWMDriver::Source,
         }
 
     public:
-        SamplePlayer(uint uGPIO) :
+        SamplePlayer(uint uGPIO, uint uSampleRate) :
             PWMDriver::Source(uGPIO),
-            mpSample(nullptr), muSamples(0), mbRepeat(false),
-            mbPlaying(false), mpActiveBuffer(nullptr) {
+            mpSample(nullptr), muSamples(0), muSampleRate(uSampleRate), mbRepeat(false),
+            mbPlaying(false), mpActiveBuffer(nullptr), mpPreparedBuffer(nullptr) {
 
             addSource(this);
             mspInstance = this;
@@ -448,24 +447,31 @@ class SamplePlayer :  public PWMDriver::Source,
             mspInstance = nullptr;
         }
 
-        void playSample(const uint8_t *pSample, uint uSamples, uint uSampleRate, bool bRepeat) {
-            if (true == mbPlaying) {
-                stopPlaying();
-            }
+        void playSample(const uint8_t *pSample, uint uSamples, bool bRepeat) {
+            halt();
             mpSample = pSample;
             muSamples = uSamples;
-            muSampleRate = uSampleRate;
             mbRepeat = bRepeat;
             
-            PWMDriver::instance()->addGroup(this);
+            // Prepare sample buffer (from the top)
+            mpSampleRead = mpSample;
+            muSamplesRemaining = muSamples;
+            mpActiveBuffer = mpPreparedBuffer = nullptr;
+            mpActiveBuffer = prepareNextBuffer();
+            mpPreparedBuffer = prepareNextBuffer();
+            printf("mpActiveBuffer = 0x%08x, mpPreparedBuffer = 0x%08x\r\n", (uint)mpActiveBuffer, (uint)mpPreparedBuffer);
+
+            PWMDriver::instance()->addGroup(this);  // Only fires first time...
+
+            start();
         }
 
-        void stopPlaying(void) {
-            if (true == mbPlaying) {
-                PWMDriver::instance()->removeGroup(this);
-                mbPlaying = false;
-            }
-        }
+        //void stopPlaying(void) {
+        //    if (true == mbPlaying) {
+        //        PWMDriver::instance()->removeGroup(this);
+        //        mbPlaying = false;
+        //    }
+        //}
 
         // Subclass required implementations
         virtual float getDesiredUpdateFrequency(void) {
@@ -501,19 +507,11 @@ class SamplePlayer :  public PWMDriver::Source,
                 pPWMCountRegister = (void*)((uint)pPWMCountRegister+2);
             }
 
-            // Prepare sample buffer (from the top)
-            mpSampleRead = mpSample;
-            muSamplesRemaining = muSamples;
-            mpActiveBuffer = mpPreparedBuffer = nullptr;
-            mpActiveBuffer = prepareNextBuffer();
-            mpPreparedBuffer = prepareNextBuffer();
-            printf("mpActiveBuffer = 0x%08x, mpPreparedBuffer = 0x%08x\r\n", (uint)mpActiveBuffer, (uint)mpPreparedBuffer);
-
-            for(uint i=0; i<4; i++) {
-                mpActiveBuffer = mpPreparedBuffer;
-                mpPreparedBuffer = prepareNextBuffer();
-                printf("iter mpActiveBuffer = 0x%08x, mpPreparedBuffer = 0x%08x\r\n", (uint)mpActiveBuffer, (uint)mpPreparedBuffer);               
-            }
+            //for(uint i=0; i<4; i++) {
+            //    mpActiveBuffer = mpPreparedBuffer;
+            //    mpPreparedBuffer = prepareNextBuffer();
+            //    printf("iter mpActiveBuffer = 0x%08x, mpPreparedBuffer = 0x%08x\r\n", (uint)mpActiveBuffer, (uint)mpPreparedBuffer);               
+            //}
 
             printf("--GPIO=%d, channel=%d, pPWMCountRegister=0x%08x\r\n", muGPIO, uChannel, (uint)pPWMCountRegister);
             dma_channel_configure(
@@ -532,21 +530,31 @@ class SamplePlayer :  public PWMDriver::Source,
         }
 
         virtual bool start(void) {
-            if (true == PWMDriver::Source::start()) {
-                pwm_set_gpio_level(muGPIO, 0);
-                dma_channel_start(muDMAChannel);
-                return true;
-            }
-            return false;
+            PWMDriver::Source::start();
+            pwm_set_enabled(muSlice, true);
+            //pwm_set_gpio_level(muGPIO, 0);
+            //dma_channel_start(muDMAChannel);    
+            dma_channel_set_read_addr(muDMAChannel, mpActiveBuffer, true);
+ 
+            return true;       
+            //if (true == PWMDriver::Source::start()) {
+            //    pwm_set_gpio_level(muGPIO, 0);
+            //    dma_channel_start(muDMAChannel);
+            //    return true;
+            //}
+            //return false;
         }
 
         virtual bool halt(void) {
-            if (true == PWMDriver::Source::halt()) {
-                pwm_set_enabled(muSlice, false);
-                dma_channel_abort(muDMAChannel);
-                return true;
-            }
-            return false;
+            dma_channel_abort(muDMAChannel);
+            pwm_set_enabled(muSlice, false);
+            //if (true == PWMDriver::Source::halt()) {
+            //    pwm_set_enabled(muSlice, false);
+            //    dma_channel_abort(muDMAChannel);
+            //    return true;
+            //}
+            //return false;
+            return true;
         }
 
         // Overrides that manage DMA channel sequencing
@@ -572,8 +580,22 @@ int main(void) {
     Heartbeat cHeartbeat(PICO_DEFAULT_LED_PIN);
     //SineWave cSineWave(14); // Pin 19
     //DMASineWave cDMASineWave(14); // Pin 19
-    SamplePlayer cLaser(14);
-    cLaser.playSample(pLaserShot1, kLaserShot1Size, 16000, true);
+    SamplePlayer cLaser(14, 16000);
+    //cLaser.playSample(pBwowww, kBwowwwSize, 16000, true);
+    //cLaser.playSample(pLaserShot1, kLaserShot1Size, 16000, true);
+    //cLaser.playSample(pLaserShot2, kLaserShot2Size, 16000, true);
+    while(true) {
+        cLaser.playSample(pBwowww, kBwowwwSize, true);
+        busy_wait_ms(3000);
+        cLaser.playSample(pLaserShot1, kLaserShot1Size, true);
+        busy_wait_ms(1000);
+        cLaser.playSample(pLaserShot2, kLaserShot2Size, true);
+        busy_wait_ms(1000);
+        cLaser.playSample(pLaserShot3, kLaserShot3Size, false);
+        busy_wait_ms(1000);
+        printf("Calls %d, Calls2 %d\r\n", giCalls, giCalls2);
+        giCalls = 0; giCalls2 = 0;
+    }
     ///uint8_t pRamp[256];
     //for(uint i=0; i<256; i++) {
     //    pRamp[i] = i;
@@ -584,8 +606,6 @@ int main(void) {
     // can twiddle our thumbs
     while (true) {
         busy_wait_ms(1000);
-        printf("Calls %d, Calls2 %d\r\n", giCalls, giCalls2);
-        giCalls = 0; giCalls2 = 0;
         //tight_loop_contents();
     }
 
