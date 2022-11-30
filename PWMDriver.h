@@ -46,7 +46,7 @@ class PWMDriver {
                 uint muGPIO;
                 uint muSlice;
                 uint muWrapValue;
-                float mfSampleRateHz;
+                float mfPWMRateHz;
                 bool mbRunning;
                 
             public:
@@ -54,18 +54,22 @@ class PWMDriver {
                 ~Source();
 
                 uint getGPIO(void) const;
-                float getSampleRateHz(void) const;
+                float getPWMRateHz(void) const;
+
+                void setPWMConfiguration(float fPWMRateHz, float fClkDiv, uint uWrapValue);
 
                 // Subclass overrideable
-                virtual void setPWMConfiguration(float fSampleRateHz, float fClkDiv, uint uWrapValue);
-                virtual void configure(void);
-                virtual bool start(void);
-                virtual bool halt(void);                
+                virtual bool setActive(bool bActive);
+        };
+
+
+        // Subclass of Source that updates on PWM wrap interrupt and implements its own sequencing.
+        // Note that the owning group configures the PWM frequency which
+        class UpdateOnWrapSource : public Source {
+            public:
+                virtual bool setActive(bool bActive);   // Base class override (handling sequence reset)
                 
                 void updateSource(void);
-
-                // Subclass required implementations
-                virtual float getDesiredUpdateFrequency(void) = 0;
                 virtual void resetSequence(void) = 0;      // Reset to start of output sequence
                 virtual float getNextSequence(void) = 0;   // Get next value to use in range (0.0,1.0]
         };
@@ -78,9 +82,12 @@ class PWMDriver {
                 uint muClkDivider;
 
                 friend class PWMDriver;
+                bool mbManageIRQ;
                 uint muIRQSlice;                // Typically of the first source added to the group
+
                 std::list<Source*> mlSources;
                 void update(void);
+                void setPWMConfiguration(float fPWMRateHz, float fClkDiv, uint uWrapValue);
 
             public:
                 Group(void);
@@ -95,8 +102,7 @@ class PWMDriver {
                 void halt(void);
 
                 // User implemented to describe parameters of the actual group
-                float getDesiredUpdateFrequency(void) const;           // Return desired PWM frequency
-                void setPWMConfiguration(float fSampleRateHz, float fClkDiv, uint uWrapValue);
+                virtual float getDesiredUpdateFrequency(void) const = 0;           // Return desired PWM frequency
         };
 
     private:

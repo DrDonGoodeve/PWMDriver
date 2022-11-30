@@ -40,7 +40,7 @@ extern int giCalls;
 PWMDriver::Source::Source(uint uGPIO) :
     mbRunning(false),
     muGPIO(uGPIO), muSlice(pwm_gpio_to_slice_num(uGPIO)),
-    mfSampleRateHz(kDefaultPWMFrequency), mfClkDiv(1.0f), muWrapValue(kPWMCountMax) {
+    mfPWMRateHz(kDefaultPWMFrequency), mfClkDiv(1.0f), muWrapValue(kPWMCountMax) {
 }
 
 PWMDriver::Source::~Source() {
@@ -50,23 +50,16 @@ uint PWMDriver::Source::getGPIO(void) const {
     return muGPIO;
 }
 
-float PWMDriver::Source::getSampleRateHz(void) const {
-    return mfSampleRateHz;
+float PWMDriver::Source::getPWMRateHz(void) const {
+    return mfPWMRateHz;
 }
 
-
-// Subclass overrideable
-void PWMDriver::Source::setPWMConfiguration(float fSampleRateHz, float fClkDiv, uint uWrapValue) {
-    printf("PWMDriver::Source::setPWMConfiguration(%.2f, %.2f, %d)\r\n", fSampleRateHz, fClkDiv, uWrapValue);
-    mfSampleRateHz = fSampleRateHz;
+void PWMDriver::Source::setPWMConfiguration(float fPWMRateHz, float fClkDiv, uint uWrapValue) {
+    printf("PWMDriver::Source::setPWMConfiguration(%.2f, %.2f, %d)\r\n", fPWMRateHz, fClkDiv, uWrapValue);
+    mfPWMRateHz = fPWMRateHz;
     mfClkDiv = fClkDiv;
     muWrapValue = uWrapValue;
-    configure();
-}
-                
-void PWMDriver::Source::configure(void) {
-    printf("PWMDriver::Source::configure GPIO:%d, clkdiv:%f, wrap:%d\r\n", muGPIO, mfClkDiv, muWrapValue);
-    // Disable PWM output - reconfigure - enable PWM output.
+
     pwm_set_enabled(muSlice, false);
     mbRunning = false;
     gpio_set_function(muGPIO, GPIO_FUNC_PWM);
@@ -76,42 +69,36 @@ void PWMDriver::Source::configure(void) {
     pwm_config_set_output_polarity(&cPWMConfig, true, true);
     pwm_config_set_wrap(&cPWMConfig, (uint16_t)muWrapValue);
     pwm_init(muSlice, &cPWMConfig, false);
-
-    // Ready for first in sequence
-    resetSequence();
 }
 
-bool PWMDriver::Source::start(void) {
-    printf("PWMDriver::Source::start\r\n");
-    if (false == mbRunning) {
-        updateSource();        
-        pwm_set_enabled(muSlice, true);
-        mbRunning = true;
-        return true;
+bool PWMDriver::Source::setActive(bool bActive) {
+    if (bActive != mbRunning) {
+        if (true == bActive) {
+            pwm_set_enabled(muSlice, true);
+            mbRunning = true;
+            return true;
+        } else {
+            pwm_set_enabled(muSlice, false);
+            mbRunning = false;
+            return true;
+        }
     }
     return false;
 }
 
-void PWMDriver::Source::updateSource(void) {
+// Extra method for UpdateOnWrapSource:: subtype
+void PWMDriver::UpdateOnWrapSource::updateSource(void) {
     float fNext(getNextSequence());
     fNext = _limit(fNext, 0.0f, 1.0f);
     uint uNext((uint)roundf(fNext * (float)muWrapValue));
     pwm_set_gpio_level(muGPIO, uNext);
 }
 
-bool PWMDriver::Source::halt(void) {
-    if (true == mbRunning) {
-        pwm_set_enabled(muSlice, false);
-        mbRunning = false;
-        return true;
-    }
-    return false;
-}
-
-
-// A group is a collection of sources that share a common sample rate and are updated in unison.
+// A group is a collection of sources that share a common refresh rate. Also if the
+// group consists of UpdateOnWrapSource instances - the wrap interrupt mechanism
+// will be set up for this group.
 PWMDriver::Group::Group(void) :
-    muIRQSlice(0), muWrapCount(kPWMCountMax), muClkDivider(1) {
+    muIRQSlice(0), muWrapCount(kPWMCountMax), muClkDivider(1), mbManageIRQ(false) {
 }
 
 PWMDriver::Group::~Group() {
@@ -125,8 +112,12 @@ bool PWMDriver::Group::addSource(Source *pSource) {
     }
 
     // Add to list
+    if (dynamic_cast<UpdateOnWrapSource*>(pSource) != nullptr) {
+        mbManageIRQ = true;
+    }
+
     mlSources.push_back(pSource);
-    printf("PWMDriver::Group::addSource - %d\r\n", mlSources.size());
+    //printf("PWMDriver::Group::addSource - %d\r\n", mlSources.size());
     return true;
 }
 
@@ -141,34 +132,29 @@ bool PWMDriver::Group::removeSource(Source *pSource) {
 
 void PWMDriver::Group::start(void) {
     for(std::list<Source*>::iterator cSource=mlSources.begin(); cSource != mlSources.end(); ++cSource) {
-        (*cSource)->start();
+        (*cSource)->setActive(true);
     }            
 }
 
 void PWMDriver::Group::halt(void) {
     for(std::list<Source*>::iterator cSource=mlSources.begin(); cSource != mlSources.end(); ++cSource) {
-        (*cSource)->halt();
+        (*cSource)->setActive(false);
     }
 }
 
 void PWMDriver::Group::update(void) {
     for(std::list<Source*>::iterator cSource=mlSources.begin(); cSource != mlSources.end(); ++cSource) {
-        (*cSource)->updateSource();
+        UpdateOnWrapSource *pUOWSource(dynamic_cast<UpdateOnWrapSource*>(*cSource));
+        if (pUOWSource != nullptr) {
+            pUOWSource->updateSource();
+        }
     }
 }
 
-float PWMDriver::Group::getDesiredUpdateFrequency(void) const {
-    if (false == mlSources.empty()) {
-        return mlSources.front()->getDesiredUpdateFrequency();
-    } else {
-        return kDefaultPWMFrequency;
-    }
-}
-
-void PWMDriver::Group::setPWMConfiguration(float fSampleRateHz, float fClkDiv, uint uWrapValue) {
-    printf("PWMDriver::Group::setPWMConfiguration(%.2f, %.2f, %d)\r\n", fSampleRateHz, fClkDiv, uWrapValue);
+void PWMDriver::Group::setPWMConfiguration(float fPWMRate, float fClkDiv, uint uWrapValue) {
+    printf("PWMDriver::Group::setPWMConfiguration(%.2f, %.2f, %d)\r\n", fPWMRate, fClkDiv, uWrapValue);
     for(std::list<Source*>::iterator cSource=mlSources.begin(); cSource != mlSources.end(); ++cSource) {
-        (*cSource)->setPWMConfiguration(fSampleRateHz, fClkDiv, uWrapValue);
+        (*cSource)->setPWMConfiguration(fPWMRate, fClkDiv, uWrapValue);
     }
 }
 
@@ -176,10 +162,6 @@ void PWMDriver::Group::setPWMConfiguration(float fSampleRateHz, float fClkDiv, u
 PWMDriver *PWMDriver::mspInstance = nullptr;
 
 PWMDriver::PWMDriver(void) {
-    printf("PWMDriver::PWMDriver\r\n");
-    //gpio_init(16);
-    //gpio_set_dir(16, GPIO_OUT);
-    //gpio_put(16, false);
 }
 
 PWMDriver::~PWMDriver() {
@@ -261,17 +243,19 @@ bool PWMDriver::addGroup(Group *pGroup) {
     uWrapValue = (uWrapValue < kPWMCountMin)?kPWMCountMin:uWrapValue;
     float fRealizedFrequency((kPicoClockHz / fClkDiv8_4) / (float)uWrapValue);
 
-    // Set up the group interrupt - note there is just one PWM IRQ.
-    // Mask our slice's IRQ output into the PWM block's single interrupt line,
-    // register the interrupt handler and enable it. Nothing happens yet
-    // because we have not started the PWM running for this slice.
-    Source *pPrimary(pGroup->mlSources.front());
-    pGroup->muIRQSlice = pwm_gpio_to_slice_num(pPrimary->getGPIO());
-    printf("PWMDriver::addGroup - muIRQSlice = %d\r\n", pGroup->muIRQSlice);
-    pwm_clear_irq(pGroup->muIRQSlice);
-    pwm_set_irq_enabled(pGroup->muIRQSlice, true);
-    irq_set_exclusive_handler(PWM_IRQ_WRAP, PWMDriver::pwmISRStatic);
-    irq_set_enabled(PWM_IRQ_WRAP, true);
+    if (true == pGroup->mbManageIRQ) {
+        // Set up the group interrupt - note there is just one PWM IRQ.
+        // Mask our slice's IRQ output into the PWM block's single interrupt line,
+        // register the interrupt handler and enable it. Nothing happens yet
+        // because we have not started the PWM running for this slice.
+        Source *pPrimary(pGroup->mlSources.front());
+        pGroup->muIRQSlice = pwm_gpio_to_slice_num(pPrimary->getGPIO());
+        printf("PWMDriver::addGroup - muIRQSlice = %d\r\n", pGroup->muIRQSlice);
+        pwm_clear_irq(pGroup->muIRQSlice);
+        pwm_set_irq_enabled(pGroup->muIRQSlice, true);
+        irq_set_exclusive_handler(PWM_IRQ_WRAP, PWMDriver::pwmISRStatic);
+        irq_set_enabled(PWM_IRQ_WRAP, true);
+    }
 
     // Note setPWMConfiguration may disable the pwm irq if it is intending
     // to not use the interrupt-based update mechanism.

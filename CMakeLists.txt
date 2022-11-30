@@ -13,7 +13,7 @@ set(PICO_SDK_PATH "C:/Projects/Pico/pico-sdk")
 include(pico_sdk_import.cmake)
 
 # Project announcement
-project(PWMDriverTest C CXX ASM)
+project(MagicBroom C CXX ASM)
 set(PICO_CXX_ENABLE_EXCEPTIONS 1)
 set(PICO_CXX_ENABLE_RTTI 1)
 
@@ -21,22 +21,27 @@ set(PICO_CXX_ENABLE_RTTI 1)
 pico_sdk_init()
 
 # Project definitions
-add_executable(PWMDriverTest
+add_executable(MagicBroom
         main.cpp
         PWMDriver.cpp
+        SwitchScanner.cpp
+        WS2812.cpp
 )
-pico_set_program_name(PWMDriverTest "PWMDriverTest")
-pico_set_program_version(PWMDriverTest "0.2")
+
+pico_generate_pio_header(MagicBroom ${CMAKE_CURRENT_LIST_DIR}/WS2812.pio)
+
+pico_set_program_name(MagicBroom "MagicBroom")
+pico_set_program_version(MagicBroom "0.1")
 
 # Via UART or USB?
-pico_enable_stdio_uart(PWMDriverTest 0)
-pico_enable_stdio_usb(PWMDriverTest 1)
+pico_enable_stdio_uart(MagicBroom 0)
+pico_enable_stdio_usb(MagicBroom 1)
 
 # pull in common dependencies
-target_link_libraries(PWMDriverTest pico_stdlib pico_sync)
+target_link_libraries(MagicBroom pico_stdlib pico_sync)
 
 # pull in hardware support
-target_link_libraries(PWMDriverTest
+target_link_libraries(MagicBroom
         hardware_dma
         hardware_timer
         hardware_watchdog
@@ -45,7 +50,8 @@ target_link_libraries(PWMDriverTest
         hardware_pwm
         hardware_irq
         hardware_sync
+        hardware_pio
 )
 
 # create map/bin/hex file etc.
-pico_add_extra_outputs(PWMDriverTest)
+pico_add_extra_outputs(MagicBroom)
