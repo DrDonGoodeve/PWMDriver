@@ -50,6 +50,7 @@ class Heartbeat {
         float mfPhaseShift;
         float mfAmplitude;
         bool mbRising;
+        bool mbActivityHigh;
 
         struct repeating_timer mcHeartbeatTimer;
 
@@ -66,10 +67,11 @@ class Heartbeat {
             float fRed(sinf(mfPhase)), fGreen(sinf(mfPhase+mfPhaseShift)), fBlue(sinf(mfPhase+(2.0f*mfPhaseShift)));
             fRed = (fRed*fRed)*mfAmplitude; 
             fGreen = (fGreen*fGreen)*mfAmplitude; 
-            fBlue = (fBlue*fBlue)*mfAmplitude; 
-            uint8_t uRed((uint8_t)roundf(fRed*255.0f));
-            uint8_t uGreen((uint8_t)roundf(fGreen*255.0f));
-            uint8_t uBlue((uint8_t)roundf(fBlue*255.0f));
+            fBlue = (fBlue*fBlue)*mfAmplitude;
+            float fMultiplier((false==mbActivityHigh)?4.0f:255.0f);
+            uint8_t uRed((uint8_t)roundf(fRed*fMultiplier));
+            uint8_t uGreen((uint8_t)roundf(fGreen*fMultiplier));
+            uint8_t uBlue((uint8_t)roundf(fBlue*fMultiplier));
 
             mcLEDs.fill(WS2812::RGB(uRed, uGreen, uBlue));
             mcLEDs.show();
@@ -97,7 +99,7 @@ class Heartbeat {
     public:
         Heartbeat(void) :
             mcLEDs(kRGBLEDGPIO, 1, pio0, 0, WS2812::FORMAT_GRB),
-            mfPhase(0.0f), mfAmplitude(0.1f), mbRising(true), mfPhaseShift(kPi/1.3f) {
+            mbActivityHigh(false), mfPhase(0.0f), mfAmplitude(0.1f), mbRising(true), mfPhaseShift(kPi/1.3f) {
             mspSelf = this;
 
             // Startup colourful heartbeat
@@ -107,6 +109,12 @@ class Heartbeat {
         ~Heartbeat() {
             cancel_repeating_timer(&mcHeartbeatTimer);
             mspSelf = nullptr;
+        }
+
+        static void setActivityLevel(bool bHighNotLow) {
+            if (mspSelf != nullptr) {
+                mspSelf->mbActivityHigh = bHighNotLow;
+            }
         }
 };
 Heartbeat *Heartbeat::mspSelf = nullptr;
@@ -340,6 +348,7 @@ class RFRelay : public SwitchScanner::Switch {
 
         void press(void) {
             printf("RFRelay down\r\n");
+            Heartbeat::setActivityLevel(true);
             scMagicBroomLights.nextPattern();
         }
 
@@ -349,6 +358,7 @@ class RFRelay : public SwitchScanner::Switch {
 
         void hold(void) {
             printf("RFRelay hold\r\n");
+            Heartbeat::setActivityLevel(false);
             scMagicBroomLights.resetPattern();
         }
 };
@@ -361,6 +371,7 @@ class PushButton: public SwitchScanner::Switch {
 
         void press(void) {
             printf("PushButton down\r\n");
+            Heartbeat::setActivityLevel(true);
             scMagicBroomLights.nextPattern();
         }
 
@@ -371,6 +382,7 @@ class PushButton: public SwitchScanner::Switch {
         void hold(void) {
             printf("PushButton hold\r\n");
             scMagicBroomLights.resetPattern();
+            Heartbeat::setActivityLevel(false);
         }
 };
 
