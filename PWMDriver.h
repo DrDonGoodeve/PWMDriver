@@ -67,9 +67,12 @@ class PWMDriver {
         // Note that the owning group configures the PWM frequency which
         class UpdateOnWrapSource : public Source {
             public:
-                virtual bool setActive(bool bActive);   // Base class override (handling sequence reset)
-                
+                UpdateOnWrapSource(uint uGPIO);
+                ~UpdateOnWrapSource();
+
                 void updateSource(void);
+
+                virtual bool setActive(bool bActive);      // Override handles sequence reset
                 virtual void resetSequence(void) = 0;      // Reset to start of output sequence
                 virtual float getNextSequence(void) = 0;   // Get next value to use in range (0.0,1.0]
         };

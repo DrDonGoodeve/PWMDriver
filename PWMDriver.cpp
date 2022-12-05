@@ -66,7 +66,7 @@ void PWMDriver::Source::setPWMConfiguration(float fPWMRateHz, float fClkDiv, uin
     pwm_set_gpio_level(muGPIO, 0x0);    // Off
     pwm_config cPWMConfig(pwm_get_default_config());
     pwm_config_set_clkdiv(&cPWMConfig, mfClkDiv);
-    pwm_config_set_output_polarity(&cPWMConfig, true, true);
+    pwm_config_set_output_polarity(&cPWMConfig, false, false);
     pwm_config_set_wrap(&cPWMConfig, (uint16_t)muWrapValue);
     pwm_init(muSlice, &cPWMConfig, false);
 }
@@ -84,6 +84,18 @@ bool PWMDriver::Source::setActive(bool bActive) {
         }
     }
     return false;
+}
+
+PWMDriver::UpdateOnWrapSource::UpdateOnWrapSource(uint uGPIO) :
+    Source(uGPIO) {
+}
+
+PWMDriver::UpdateOnWrapSource::~UpdateOnWrapSource() {
+}
+
+bool PWMDriver::UpdateOnWrapSource::setActive(bool bActive) {
+    resetSequence();
+    return Source::setActive(bActive);
 }
 
 // Extra method for UpdateOnWrapSource:: subtype

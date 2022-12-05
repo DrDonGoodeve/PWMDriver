@@ -16,7 +16,9 @@
 // Defines
 //-----------------------------------------------------------------------------
 #define kSwitchScanVectorDepth      (3)
-#define kSwitchScanInterval         (10)    // msec
+#define kSwitchScanInterval         (10)        // msec
+#define kHoldUsec                   (300000)    // usec
+#define kDoublePressMaxInterval     (200000)
 
 
 // SwitchScanner class
@@ -24,15 +26,21 @@
 class SwitchScanner {
     public:
         class Switch {
+            public:
+                typedef enum {
+                    kNoPull,
+                    kPullUp,
+                    kPullDown
+                }Pull;       
+
             private:
                 uint muGPIO;
                 bool mbPositiveLogic;
-                bool mbPullUp;
-                bool mbPullDown;
 
                 // Dynamic state
                 friend class SwitchScanner;
                 bool mbIsPressed;
+                bool mbIsHeld;
                 uint muLastPressTime;
                 uint muLastReleaseTime;
 
@@ -40,11 +48,15 @@ class SwitchScanner {
                 void assertedLow(void);
 
             public:
-                Switch(uint uGPIO, bool bPullUp, bool bPullDown=false, bool bPositiveLogic=true);
+                Switch(uint uGPIO, Pull ePull=kNoPull, bool bPositiveLogic=true);
                 ~Switch();
 
                 uint getGPIO(void) const;
                 bool isPositiveLogic(void) const;
+
+                // Delegate to user-supplied methods
+                void pressWrapper(void);
+                void releaseWrapper(void);
 
                 // User-override button handling methods
                 virtual void press(void);

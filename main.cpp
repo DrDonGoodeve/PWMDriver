@@ -109,9 +109,270 @@ class Heartbeat {
             mspSelf = nullptr;
         }
 };
-
 Heartbeat *Heartbeat::mspSelf = nullptr;
 
+#define kRFRelayGPIO    (10)
+#define kPushButtonGPIO (9)
+
+#define kLaserGPIO      (1)
+#define kLED1GPIO       (7)
+#define kLED3GPIO       (5)
+#define kLED4GPIO       (6)
+#define kLED2GPIO       (4)
+#define kLED5GPIO       (8)
+
+class SequencedLED : public PWMDriver::UpdateOnWrapSource {
+    public:
+        class Step {
+            public:
+                float mfFinalLevel;
+                uint muTransitionMsec;
+                Step(float fFinalLevel, uint uTransitionMsec) :
+                    mfFinalLevel(fFinalLevel), muTransitionMsec(uTransitionMsec) {
+                }
+        };
+
+    private:
+        std::list<Step> mlProgram;
+        std::list<Step> mlSequence;
+        float mfPreDelaySec;
+        bool mbRepeat;
+
+        float mfSecondsLeftInTransition;
+        float mfTargetLevel;
+        float mfCurrentLevel;
+
+    public:
+        SequencedLED(uint uGPIO) :
+            UpdateOnWrapSource(uGPIO),
+            mfSecondsLeftInTransition(0.0f), mfTargetLevel(0.0f), mfCurrentLevel(0.0f),
+            mbRepeat(false), mfPreDelaySec(0.0f) {
+        }
+
+        ~SequencedLED() {
+        }
+
+        void setSequence(const std::list<Step> &lSteps=std::list<Step>{}, float fPreDelaySec=0.0f, bool bRepeat=true) {
+            mlProgram = lSteps;
+            mfPreDelaySec = fPreDelaySec;
+            mbRepeat = bRepeat;
+
+            resetSequence();
+        }
+
+        virtual void resetSequence(void) {
+            mlSequence = mlProgram;
+            mfTargetLevel = mfCurrentLevel;
+            mfSecondsLeftInTransition = mfPreDelaySec;
+
+        }
+
+        virtual float getNextSequence(void) {
+            if (mfSecondsLeftInTransition <= 0.0f) {
+                if (false == mlSequence.empty()) {
+                    Step cLastStep(mlSequence.front());
+                    mlSequence.pop_front();
+                    if (true == mbRepeat) {
+                        mlSequence.push_back(cLastStep);
+                    }
+                    if (false == mlSequence.empty()) {
+                        Step &cThisStep(mlSequence.front());
+                        mfTargetLevel = cLastStep.mfFinalLevel;
+                        mfSecondsLeftInTransition = ((float)cThisStep.muTransitionMsec / 1000.0f);
+                    } else {
+                        mfSecondsLeftInTransition = 0.0f;
+                        mfCurrentLevel = mfTargetLevel;
+                    }
+                } else {
+                    mfCurrentLevel = mfTargetLevel = 0.0f;
+                }
+                printf("fSec=%.3f, mfCL=%.3f, mfTL=%.3f\r\n", mfSecondsLeftInTransition, mfCurrentLevel, mfTargetLevel);
+            }
+            if (mfSecondsLeftInTransition > 0.0f) {
+                float fCallbackPeriod(1.0f / getPWMRateHz());
+                float fCallsRemaining(mfSecondsLeftInTransition / fCallbackPeriod);
+                float fDelta((mfTargetLevel - mfCurrentLevel) / fCallsRemaining);
+                mfCurrentLevel += fDelta;
+                mfSecondsLeftInTransition -= fCallbackPeriod;
+            }
+            return mfCurrentLevel;
+        }
+};
+
+static const std::list<SequencedLED::Step> slShortAlive {
+    SequencedLED::Step(0.01f,1000), SequencedLED::Step(0.0f,1000), SequencedLED::Step(0.0f,1500)
+};
+
+static const std::list<SequencedLED::Step> slSlowLowPulse {
+    SequencedLED::Step(0.2f,400), SequencedLED::Step(0.3f,400), SequencedLED::Step(0.2f,400), SequencedLED::Step(0.0f,400), SequencedLED::Step(0.0f,400)
+};
+
+static const std::list<SequencedLED::Step> slLowHeartbeatPulse {
+    SequencedLED::Step(0.3f,100), SequencedLED::Step(0.0f,100),
+    SequencedLED::Step(0.5f,100), SequencedLED::Step(0.0f,100),
+    SequencedLED::Step(0.0f,500)
+};
+
+static const std::list<SequencedLED::Step> slHighHeartbeatPulse {
+    SequencedLED::Step(0.7f,100), SequencedLED::Step(0.0f,100),
+    SequencedLED::Step(1.0f,100), SequencedLED::Step(0.0f,100),
+    SequencedLED::Step(0.0f,300)
+};
+
+static const std::list<SequencedLED::Step> slSlowHighPulse {
+    SequencedLED::Step(0.3f,200), SequencedLED::Step(0.5f,200), SequencedLED::Step(0.8f,200),
+    SequencedLED::Step(1.0f,200), SequencedLED::Step(1.0f,200), 
+    SequencedLED::Step(0.8f,200), SequencedLED::Step(0.5f,200), SequencedLED::Step(0.3f,200), 
+    SequencedLED::Step(0.0f,200), SequencedLED::Step(0.0f,200)
+};
+
+static const std::list<SequencedLED::Step> slSlowSustainPulse {
+    SequencedLED::Step(0.3f,200), SequencedLED::Step(0.5f,200), SequencedLED::Step(0.8f,200),
+    SequencedLED::Step(1.0f,200), SequencedLED::Step(1.0f,200), 
+    SequencedLED::Step(0.8f,200), SequencedLED::Step(0.5f,200), SequencedLED::Step(0.3f,200),
+};
+
+static const std::list<SequencedLED::Step> slFastHighPulse {
+    SequencedLED::Step(0.3f,100), SequencedLED::Step(0.5f,100), SequencedLED::Step(0.8f,100),
+    SequencedLED::Step(1.0f,100), SequencedLED::Step(1.0f,100), 
+    SequencedLED::Step(0.8f,100), SequencedLED::Step(0.5f,100), SequencedLED::Step(0.3f,100), 
+    SequencedLED::Step(0.0f,100), SequencedLED::Step(0.0f,100)
+};
+
+class LEDGroup : public PWMDriver::Group {
+    private:
+        uint muPattern;
+        SequencedLED mcLaser;
+        SequencedLED mcLED1;
+        SequencedLED mcLED2;
+        SequencedLED mcLED3;
+        SequencedLED mcLED4;
+        SequencedLED mcLED5;
+
+    public:
+        LEDGroup(void) :
+            mcLaser(kLaserGPIO), mcLED1(kLED1GPIO), mcLED2(kLED2GPIO), mcLED3(kLED3GPIO), mcLED4(kLED4GPIO), mcLED5(kLED5GPIO) {
+            addSource(&mcLaser);
+            addSource(&mcLED1);
+            addSource(&mcLED2);
+            addSource(&mcLED3);
+            addSource(&mcLED4);
+            addSource(&mcLED5);
+            resetPattern();
+        }
+
+        virtual float getDesiredUpdateFrequency(void) const {
+            return kLEDUpdateFreq;
+        }
+
+        void resetPattern(void) {
+            muPattern = 0;
+            mcLaser.setSequence();
+            mcLED1.setSequence();
+            mcLED2.setSequence();
+            mcLED3.setSequence();
+            mcLED4.setSequence();
+            mcLED5.setSequence(slShortAlive);
+        }
+
+        void nextPattern(void) {
+            muPattern++;
+            switch(muPattern) {
+                case 1: // Laser low heartbeat
+                    mcLED1.setSequence();
+                    mcLaser.setSequence(slLowHeartbeatPulse);
+                    break;
+                case 2: // Laser getting excited
+                    mcLaser.setSequence(slHighHeartbeatPulse);
+                    break;
+                case 3: // Blue joins in
+                    mcLaser.setSequence(slHighHeartbeatPulse);
+                    mcLED1.setSequence(slLowHeartbeatPulse, 0.1f);
+                    break;
+                case 4: // Low Slow flow up
+                    mcLED1.setSequence(slSlowLowPulse, 0.0f);
+                    mcLED2.setSequence(slSlowLowPulse, 0.3f);
+                    mcLED3.setSequence(slSlowLowPulse, 0.6f);
+                    mcLED4.setSequence(slSlowLowPulse, 0.9f);
+                    mcLED5.setSequence(slSlowLowPulse, 1.2f);
+                    break;        
+                case 5:
+                    mcLED1.setSequence(slSlowHighPulse, 0.0f);
+                    mcLED2.setSequence(slSlowHighPulse, 0.2f);
+                    mcLED3.setSequence(slSlowHighPulse, 0.4f);
+                    mcLED4.setSequence(slSlowHighPulse, 0.6f);
+                    mcLED5.setSequence(slSlowHighPulse, 0.8f);
+                    break;
+                case 6:
+                    mcLED1.setSequence(slFastHighPulse, 0.0f);
+                    mcLED2.setSequence(slFastHighPulse, 0.15f);
+                    mcLED3.setSequence(slFastHighPulse, 0.3f);
+                    mcLED4.setSequence(slFastHighPulse, 0.45f);
+                    mcLED5.setSequence(slFastHighPulse, 0.6f);
+                    break;
+                case 7:
+                    mcLED1.setSequence(slFastHighPulse, 0.3f);
+                    mcLED2.setSequence(slFastHighPulse, 0.15f);
+                    mcLED3.setSequence(slFastHighPulse, 0.0f);
+                    mcLED4.setSequence(slFastHighPulse, 0.15f);
+                    mcLED5.setSequence(slFastHighPulse, 0.3f);
+                    break;
+                case 8:
+                default:
+                    mcLED1.setSequence(slFastHighPulse, 0.6f);
+                    mcLED2.setSequence(slFastHighPulse, 0.45f);
+                    mcLED3.setSequence(slFastHighPulse, 0.3f);
+                    mcLED4.setSequence(slFastHighPulse, 0.15f);
+                    mcLED5.setSequence(slFastHighPulse, 0.0f);
+                    break;
+            }
+        }
+
+
+}scMagicBroomLights;
+
+
+class RFRelay : public SwitchScanner::Switch {
+    public:
+        RFRelay(void) :
+            Switch(kRFRelayGPIO, kPullUp, false) {
+        }
+
+        void press(void) {
+            printf("RFRelay down\r\n");
+            scMagicBroomLights.nextPattern();
+        }
+
+        void release(void) {
+            printf("RFRelay release\r\n");
+        }
+
+        void hold(void) {
+            printf("RFRelay hold\r\n");
+            scMagicBroomLights.resetPattern();
+        }
+};
+
+class PushButton: public SwitchScanner::Switch {
+    public:
+        PushButton(void) :
+            Switch(kPushButtonGPIO, kPullUp, false) {
+        }
+
+        void press(void) {
+            printf("PushButton down\r\n");
+            scMagicBroomLights.nextPattern();
+        }
+
+        void release(void) {
+            printf("PushButton release\r\n");
+        }
+
+        void hold(void) {
+            printf("PushButton hold\r\n");
+            scMagicBroomLights.resetPattern();
+        }
+};
 
 
 int main(void) {
@@ -119,6 +380,19 @@ int main(void) {
     stdio_init_all();
 
     Heartbeat cHeartbeat;
+
+    // Buttons
+    PushButton cPushButton;
+    RFRelay cRFRelay;
+    SwitchScanner cScanner;
+    cScanner.addSwitch(&cPushButton);
+    cScanner.addSwitch(&cRFRelay);
+    cScanner.setScanActive(true);
+
+    // LEDs and laser
+    PWMDriver::instance()->addGroup(&scMagicBroomLights);
+    scMagicBroomLights.start();
+
 
     while(true) {
         tight_loop_contents();
